@@ -1,29 +1,24 @@
 FROM node:20-slim
 
-# تثبيت LibreOffice مع جميع الخطوط المطلوبة
+# تثبيت LibreOffice الكامل مع جميع الخطوط
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    libreoffice-calc \
-    libreoffice-writer \
-    libreoffice-impress \
-    # خطوط Microsoft الأساسية (Arial, Times New Roman, Courier, etc.)
+    libreoffice \
+    # خطوط Microsoft المتوافقة
     fonts-liberation \
     fonts-liberation2 \
     # خطوط عربية شاملة
+    fonts-arabeyes \
+    fonts-kacst \
+    fonts-kacst-one \
     fonts-noto-core \
-    fonts-noto-cjk \
     fonts-noto-extra \
-    fonts-noto-mono \
     fonts-noto-ui-core \
     # خطوط إضافية
     fonts-dejavu-core \
     fonts-dejavu-extra \
     fonts-freefont-ttf \
     fonts-opensymbol \
-    fonts-symbola \
-    fonts-arabeyes \
-    fonts-kacst \
-    fonts-kacst-one \
     fontconfig \
     && fc-cache -fv \
     && apt-get clean \
@@ -33,7 +28,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # نسخ ملفات المشروع
-COPY package*.json ./
+COPY package.json ./
 RUN npm install --omit=dev
 
 COPY . .
