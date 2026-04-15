@@ -30,17 +30,34 @@ def fill_template(template_path, output_path, data_path):
     start_row = 18
     for i, item in enumerate(items):
         row = start_row + i
-        ws.cell(row=row, column=2, value=item.get('description', ''))
-        ws.cell(row=row, column=9, value=item.get('unit', ''))
+        try:
+            ws.cell(row=row, column=2, value=item.get('description', ''))
+        except AttributeError:
+            pass
+        try:
+            ws.cell(row=row, column=9, value=item.get('unit', ''))
+        except AttributeError:
+            pass
         try:
             qty = float(item.get('quantity', 1))
         except:
             qty = 1
-        ws.cell(row=row, column=10, value=qty)
-        ws.cell(row=row, column=13, value=item.get('item_number', ''))
+        try:
+            ws.cell(row=row, column=10, value=qty)
+        except AttributeError:
+            pass
+        try:
+            ws.cell(row=row, column=13, value=item.get('item_number', ''))
+        except AttributeError:
+            pass
 
     for r in range(32, 36):
-        ws.cell(row=r, column=7, value=wo_number)
+        try:
+            cell = ws.cell(row=r, column=7)
+            cell.value = wo_number
+        except AttributeError:
+            # خلية مدموجة - تخطي
+            pass
 
     try:
         wb.save(output_path)
