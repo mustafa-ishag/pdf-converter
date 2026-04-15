@@ -68,13 +68,20 @@ app.post('/convert-template', upload.single('template'), async (req, res) => {
 
     // تعبئة القالب بـ Python
     const pyScript = path.join(__dirname, 'fill_template.py');
-    const pyOut = execSync(`python3 "${pyScript}" "${templatePath}" "${filledPath}" "${dataPath}" 2>&1`, {
-      timeout: 30000, env: { ...process.env, HOME: tmpDir }
-    }).toString();
-    console.log('Python:', pyOut);
+    try {
+      const pyOut = execSync(`python3 "${pyScript}" "${templatePath}" "${filledPath}" "${dataPath}" 2>&1`, {
+        timeout: 30000, env: { ...process.env, HOME: tmpDir }
+      }).toString();
+      console.log('Python:', pyOut);
+    } catch (pyErr) {
+      const pyOutput = pyErr.stdout ? pyErr.stdout.toString() : '';
+      const pyStderr = pyErr.stderr ? pyErr.stderr.toString() : '';
+      console.error('Python error:', pyOutput, pyStderr);
+      throw new Error(`Python: ${pyOutput || pyStderr || pyErr.message}`);
+    }
 
     if (!fs.existsSync(filledPath)) {
-      throw new Error('Python fill failed');
+      throw new Error('Python fill failed - no output file');
     }
 
     // تحويل لـ PDF
