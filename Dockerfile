@@ -4,13 +4,12 @@ FROM node:20-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     libreoffice \
-    python3 python3-pip \
+    python3 python3-openpyxl \
     fonts-liberation fonts-liberation2 \
     fonts-arabeyes fonts-kacst fonts-kacst-one \
     fonts-noto-core fonts-dejavu-core \
     fonts-freefont-ttf fonts-opensymbol \
     fontconfig && \
-    pip3 install --no-cache-dir openpyxl && \
     fc-cache -fv && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
