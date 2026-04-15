@@ -9,46 +9,48 @@ const { execSync } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// البحث عن مسار x2t
-function findX2t() {
-  const paths = [
-    '/opt/onlyoffice/documentbuilder/x2t',
-    '/opt/onlyoffice/documentbuilder/core/x2t',
-    '/usr/bin/x2t'
-  ];
-  for (const p of paths) {
-    if (fs.existsSync(p)) return p;
-  }
-  // بحث عام
+// البحث عن x2t
+function findFile(name) {
   try {
-    const result = execSync('find /opt -name "x2t" -type f 2>/dev/null', { timeout: 5000 }).toString().trim();
-    if (result) return result.split('\n')[0];
-  } catch(e) {}
-  return null;
+    const result = execSync(`find /opt -name "${name}" -type f 2>/dev/null | head -1`, { timeout: 10000 }).toString().trim();
+    return result || null;
+  } catch(e) { return null; }
 }
 
-// البحث عن مسار AllFonts.js
-function findAllFonts() {
-  const paths = [
-    '/opt/onlyoffice/documentbuilder/sdkjs/common/AllFonts.js',
-    '/opt/onlyoffice/documentbuilder/core/AllFonts.js',
-    '/var/lib/onlyoffice/documentserver/sdkjs/common/AllFonts.js'
-  ];
-  for (const p of paths) {
-    if (fs.existsSync(p)) return p;
-  }
+const X2T_PATH = findFile('x2t') || '/opt/onlyoffice/documentbuilder/x2t';
+
+// توليد AllFonts.js إذا لم يكن موجوداً
+let ALL_FONTS_PATH = findFile('AllFonts.js');
+if (!ALL_FONTS_PATH) {
   try {
-    const result = execSync('find /opt -name "AllFonts.js" -type f 2>/dev/null', { timeout: 5000 }).toString().trim();
-    if (result) return result.split('\n')[0];
-  } catch(e) {}
-  return '';
+    // البحث عن أداة توليد الخطوط
+    const fontGen = findFile('allfontsgen') || findFile('AllFontsGen');
+    if (fontGen) {
+      console.log('Generating AllFonts.js...');
+      execSync(`"${fontGen}" --input=/usr/share/fonts --allfonts=/tmp/AllFonts.js 2>&1 || true`, { timeout: 60000 });
+    }
+    // محاولة أخرى
+    if (!fs.existsSync('/tmp/AllFonts.js')) {
+      execSync(`"${X2T_PATH}" --AllFontsGen=/usr/share/fonts:/tmp/AllFonts.js 2>&1 || true`, { timeout: 30000 });
+    }
+    if (fs.existsSync('/tmp/AllFonts.js')) {
+      ALL_FONTS_PATH = '/tmp/AllFonts.js';
+    }
+  } catch(e) {
+    console.log('Could not generate AllFonts.js:', e.message);
+  }
 }
 
-const X2T_PATH = findX2t();
-const ALL_FONTS_PATH = findAllFonts();
+console.log(`x2t: ${X2T_PATH} (exists: ${fs.existsSync(X2T_PATH)})`);
+console.log(`AllFonts: ${ALL_FONTS_PATH || 'not available'}`);
 
-console.log(`x2t path: ${X2T_PATH}`);
-console.log(`AllFonts path: ${ALL_FONTS_PATH}`);
+// عرض محتويات مجلد DocumentBuilder للتشخيص
+try {
+  const dbDir = '/opt/onlyoffice/documentbuilder';
+  if (fs.existsSync(dbDir)) {
+    console.log('DocumentBuilder contents:', execSync(`ls -la ${dbDir} 2>/dev/null`).toString());
+  }
+} catch(e) {}
 
 app.use(cors());
 
@@ -68,7 +70,7 @@ const upload = multer({
 
 app.post('/convert', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  if (!X2T_PATH) return res.status(500).json({ error: 'x2t not found on server' });
+  if (!fs.existsSync(X2T_PATH)) return res.status(500).json({ error: 'x2t not found' });
 
   const ext = path.extname(req.file.originalname).toLowerCase() || '.xlsx';
   const baseName = path.parse(req.file.originalname).name;
@@ -77,12 +79,12 @@ app.post('/convert', upload.single('file'), async (req, res) => {
   const outputPath = path.join(tmpDir, 'output.pdf');
   const configPath = path.join(tmpDir, 'convert.xml');
 
-  console.log(`📄 Converting: ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)} KB)`);
+  console.log(`📄 Converting: ${req.file.originalname}`);
 
   try {
     fs.writeFileSync(inputPath, req.file.buffer);
 
-    // إنشاء ملف xml config لـ x2t
+    // config بدون AllFonts إذا غير متوفر
     let configXml = `<?xml version="1.0" encoding="utf-8"?>
 <TaskQueueDataConvert>
   <m_sFileFrom>${inputPath}</m_sFileFrom>
@@ -90,41 +92,42 @@ app.post('/convert', upload.single('file'), async (req, res) => {
   <m_nFormatTo>513</m_nFormatTo>
   <m_bDontSaveAdditional>true</m_bDontSaveAdditional>
   <m_sFontDir>/usr/share/fonts</m_sFontDir>`;
-
-    if (ALL_FONTS_PATH) {
+    
+    if (ALL_FONTS_PATH && fs.existsSync(ALL_FONTS_PATH)) {
       configXml += `\n  <m_sAllFontsPath>${ALL_FONTS_PATH}</m_sAllFontsPath>`;
     }
     configXml += `\n</TaskQueueDataConvert>`;
 
     fs.writeFileSync(configPath, configXml);
-    console.log('Config:', configXml);
 
-    // تنفيذ x2t
-    const result = execSync(`"${X2T_PATH}" "${configPath}" 2>&1`, {
+    const output = execSync(`"${X2T_PATH}" "${configPath}" 2>&1`, {
       timeout: 120000,
       env: { ...process.env, HOME: tmpDir }
-    });
-    console.log('x2t output:', result.toString());
+    }).toString();
+    console.log('x2t:', output);
 
-    if (!fs.existsSync(outputPath)) {
-      // قائمة الملفات في المجلد المؤقت للتشخيص
-      const files = fs.readdirSync(tmpDir);
-      console.log('Files in tmpDir:', files);
-      throw new Error(`PDF not generated. Files: ${files.join(', ')}`);
+    // البحث عن أي pdf في المجلد
+    const files = fs.readdirSync(tmpDir);
+    console.log('Files:', files);
+    
+    let pdfFile = outputPath;
+    if (!fs.existsSync(pdfFile)) {
+      const found = files.find(f => f.endsWith('.pdf'));
+      if (found) pdfFile = path.join(tmpDir, found);
+      else throw new Error(`No PDF generated. Files: ${files.join(', ')}`);
     }
 
-    const pdfBuffer = fs.readFileSync(outputPath);
+    const pdfBuffer = fs.readFileSync(pdfFile);
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${encodeURIComponent(baseName)}.pdf"`,
       'Content-Length': pdfBuffer.length
     });
     res.send(pdfBuffer);
-    console.log(`✅ Done: ${baseName}.pdf (${(pdfBuffer.length / 1024).toFixed(1)} KB)`);
+    console.log(`✅ ${baseName}.pdf (${(pdfBuffer.length / 1024).toFixed(1)} KB)`);
 
   } catch (error) {
-    console.error('❌ Error:', error.message);
-    console.error('stderr:', error.stderr?.toString() || 'none');
+    console.error('❌', error.message);
     res.status(500).json({ error: 'Failed to convert', details: error.message });
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch(e) {}
@@ -132,25 +135,20 @@ app.post('/convert', upload.single('file'), async (req, res) => {
 });
 
 app.get('/health', (req, res) => {
+  let dbFiles = [];
+  try { dbFiles = fs.readdirSync('/opt/onlyoffice/documentbuilder'); } catch(e) {}
   res.json({
     status: 'ok',
-    service: 'PDF Converter (OnlyOffice)',
-    x2t: X2T_PATH || 'not found',
+    x2t: X2T_PATH,
+    x2tExists: fs.existsSync(X2T_PATH),
     allFonts: ALL_FONTS_PATH || 'not found',
+    dbFiles: dbFiles.slice(0, 20),
     timestamp: new Date().toISOString()
   });
 });
 
-app.get('/', (req, res) => {
-  res.json({ name: 'PDF Converter (OnlyOffice)', version: '3.1.0' });
-});
+app.get('/', (req, res) => res.json({ name: 'PDF Converter (OnlyOffice x2t)', version: '3.2.0' }));
 
-app.use((error, req, res, next) => {
-  res.status(500).json({ error: error.message });
-});
+app.use((error, req, res, next) => res.status(500).json({ error: error.message }));
 
-app.listen(PORT, () => {
-  console.log(`🚀 PDF Converter (OnlyOffice) on port ${PORT}`);
-  console.log(`   x2t: ${X2T_PATH}`);
-  console.log(`   AllFonts: ${ALL_FONTS_PATH}`);
-});
+app.listen(PORT, () => console.log(`🚀 PDF Converter on port ${PORT}`));
