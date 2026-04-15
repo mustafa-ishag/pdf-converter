@@ -9,6 +9,9 @@ const { execSync } = require('child_process');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// مسار أداة x2t من OnlyOffice
+const X2T_PATH = '/opt/onlyoffice/documentbuilder/x2t';
+
 app.use(cors());
 
 const upload = multer({
@@ -34,23 +37,34 @@ app.post('/convert', upload.single('file'), async (req, res) => {
   const baseName = path.parse(req.file.originalname).name;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'convert-'));
   const inputPath = path.join(tmpDir, `input${ext}`);
-  const outputPath = path.join(tmpDir, 'input.pdf');
+  const outputPath = path.join(tmpDir, 'output.pdf');
+  const configPath = path.join(tmpDir, 'convert.xml');
 
   console.log(`📄 Converting: ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)} KB)`);
 
   try {
+    // كتابة الملف
     fs.writeFileSync(inputPath, req.file.buffer);
 
-    // تحويل بسيط - LibreOffice يقرأ إعدادات الطباعة من الملف نفسه
-    const convertCmd = `libreoffice --headless --norestore --convert-to pdf --outdir "${tmpDir}" "${inputPath}"`;
+    // إنشاء ملف التكوين لـ x2t
+    // PDF format code = 513
+    const configXml = `<?xml version="1.0" encoding="utf-8"?>
+<TaskQueueDataConvert>
+  <m_sFileFrom>${inputPath}</m_sFileFrom>
+  <m_sFileTo>${outputPath}</m_sFileTo>
+  <m_nFormatTo>513</m_nFormatTo>
+  <m_bDontSaveAdditional>true</m_bDontSaveAdditional>
+  <m_sAllFontsPath>/opt/onlyoffice/documentbuilder/sdkjs/common/AllFonts.js</m_sAllFontsPath>
+  <m_sFontDir>/usr/share/fonts</m_sFontDir>
+  <m_sThemeDir>/opt/onlyoffice/documentbuilder/sdkjs/slide/themes</m_sThemeDir>
+</TaskQueueDataConvert>`;
 
-    execSync(convertCmd, {
+    fs.writeFileSync(configPath, configXml);
+
+    // تنفيذ التحويل باستخدام x2t
+    execSync(`${X2T_PATH} "${configPath}"`, {
       timeout: 120000,
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        SAL_USE_VCLPLUGIN: 'svp'
-      }
+      env: { ...process.env, HOME: tmpDir }
     });
 
     if (!fs.existsSync(outputPath)) {
@@ -77,13 +91,22 @@ app.post('/convert', upload.single('file'), async (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  let loVersion = 'unknown';
-  try { loVersion = execSync('libreoffice --version', { timeout: 5000 }).toString().trim(); } catch(e) {}
-  res.json({ status: 'ok', service: 'PDF Converter', libreoffice: loVersion, timestamp: new Date().toISOString() });
+  let x2tExists = fs.existsSync(X2T_PATH);
+  res.json({
+    status: 'ok',
+    service: 'PDF Converter (OnlyOffice)',
+    x2t: x2tExists ? 'available' : 'not found',
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.get('/', (req, res) => {
-  res.json({ name: 'PDF Converter API', version: '3.0.0', endpoints: { 'POST /convert': 'Convert Office to PDF', 'GET /health': 'Health check' } });
+  res.json({
+    name: 'PDF Converter API (OnlyOffice)',
+    version: '3.0.0',
+    engine: 'OnlyOffice x2t',
+    endpoints: { 'POST /convert': 'Convert Office to PDF', 'GET /health': 'Health check' }
+  });
 });
 
 app.use((error, req, res, next) => {
@@ -94,5 +117,5 @@ app.use((error, req, res, next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 PDF Converter v3.0 on port ${PORT}`);
+  console.log(`🚀 PDF Converter (OnlyOffice x2t) on port ${PORT}`);
 });
